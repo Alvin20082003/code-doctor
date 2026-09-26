@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+sse-starlette
+bandit
+pytest
+python-dotenv
+httpx
