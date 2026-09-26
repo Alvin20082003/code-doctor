@@ -166,3 +166,88 @@ class TestSecurity:
     def test_error_resilience(self):
         result = self.analyze("def broken(: pass")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# New complexity tests — BUG1, BUG2, BUG3, IMPROVEMENT
+# ---------------------------------------------------------------------------
+
+class TestComplexityBugFixes:
+    def setup_method(self):
+        from analyzers.complexity import analyze_time, analyze_space
+        self.analyze_time = analyze_time
+        self.analyze_space = analyze_space
+
+    # BUG 1 — parse failure must return "unknown", not "O(1)"
+    def test_syntax_error_returns_unknown_time(self):
+        result = self.analyze_time("def f(:\n  pass")
+        assert result["complexity"] == "unknown", (
+            f"Expected 'unknown' for broken input, got {result['complexity']}"
+        )
+        assert result["confidence"] == "low"
+        assert len(result["evidence"]) >= 1
+        assert result["evidence"][0]["line"] == 0
+        assert "could not parse" in result["evidence"][0]["reason"]
+
+    def test_syntax_error_returns_unknown_space(self):
+        result = self.analyze_space("def f(:\n  pass")
+        assert result["complexity"] == "unknown"
+
+    # BUG 1 — BOM prefix must be stripped and not cause a parse failure
+    def test_bom_prefix_stripped_before_parse(self):
+        code = "\ufeff" + _read("nested_loop.py")
+        result = self.analyze_time(code)
+        assert result["complexity"] == "O(n*m)", (
+            f"BOM-prefixed code should still parse as O(n*m), got {result['complexity']}"
+        )
+
+    # BUG 2 — optimized grouped-dict match is O(n+m), not O(n*m)
+    def test_optimized_match_time_is_n_plus_m(self):
+        code = _read("optimized_match.py")
+        result = self.analyze_time(code)
+        assert result["complexity"] == "O(n+m)", (
+            f"Expected O(n+m) for grouped dict match, got {result['complexity']}. "
+            f"Evidence: {result['evidence']}"
+        )
+
+    def test_optimized_match_space_is_n_plus_m(self):
+        code = _read("optimized_match.py")
+        result = self.analyze_space(code)
+        assert result["complexity"] == "O(n+m)", (
+            f"Expected O(n+m) space for grouped dict match, got {result['complexity']}. "
+            f"Evidence: {result['evidence']}"
+        )
+
+    # IMPROVEMENT — sequential loops over different collections = O(n+m)
+    def test_sequential_loops_different_iterables_is_n_plus_m(self):
+        code = """
+def process(users, orders):
+    result = []
+    for user in users:
+        result.append(user)
+    for order in orders:
+        result.append(order)
+    return result
+"""
+        result = self.analyze_time(code)
+        assert result["complexity"] == "O(n+m)", (
+            f"Expected O(n+m) for sequential loops over users/orders, "
+            f"got {result['complexity']}. Evidence: {result['evidence']}"
+        )
+
+    # Sequential loops over SAME iterable should stay O(n), not O(n+m)
+    def test_sequential_loops_same_iterable_stays_O_n(self):
+        code = """
+def process(items):
+    total = 0
+    for x in items:
+        total += x
+    for x in items:
+        total -= x
+    return total
+"""
+        result = self.analyze_time(code)
+        assert result["complexity"] == "O(n)", (
+            f"Expected O(n) for sequential loops over same iterable, "
+            f"got {result['complexity']}"
+        )
