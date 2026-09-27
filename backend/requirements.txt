@@ -5,3 +5,4 @@ bandit
 pytest
 python-dotenv
 httpx
+pytest-asyncio
