@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Code Doctor \u2014 Will your code survive scale?",
+  "version": "0.1.0",
+  "description": "Select code on any page (ChatGPT, Stack Overflow, GitHub) and check its time/space complexity, N+1 and security issues. IBM Granite fixes it, our analyzer verifies it.",
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Code Doctor"
+  }
+}

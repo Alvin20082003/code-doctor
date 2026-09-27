@@ -77,6 +77,10 @@ FastAPI backend
 
 ## Run locally (Windows)
 
+**One click:** double-click `START-DEMO.bat` in the project folder. It opens 3 windows (IBM Granite, backend, frontend) and the browser. Keep the 3 windows open. Before a live demo, also double-click `run\4-warmup-granite.bat` once.
+
+Manual steps (first-time setup):
+
 **1. Start IBM Granite (Ollama)**
 ```powershell
 ollama pull granite3.3:8b

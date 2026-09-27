@@ -1,0 +1,19 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Code Doctor Report</title>
+<style>
+body{background:#0B0D12;color:#E6E8EE;font-family:Inter,Segoe UI,sans-serif;margin:0;padding:28px;font-size:14px}
+.wrap{max-width:1000px;margin:0 auto}
+.card{background:#12151C;border:1px solid #232836;border-radius:8px;padding:14px;margin-bottom:14px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.tile{flex:1;min-width:160px}
+.muted{color:#8A93A6;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.mono{font-family:'JetBrains Mono',Consolas,monospace}.big{font-size:28px;font-weight:600}
+.pill{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}
+pre{background:#181C25;border:1px solid #232836;border-radius:6px;padding:12px;overflow:auto;max-height:380px;font-size:12px;margin:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+a,button{color:#4F8CFF}button{background:#4F8CFF;color:#fff;border:0;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #4F8CFF;border-top-color:transparent;border-radius:50%;animation:s 1s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes s{to{transform:rotate(360deg)}}
+</style></head><body><div class="wrap">
+<h2 style="margin:0 0 4px">◆ Code Doctor <span class="muted" style="text-transform:none">· powered by IBM Granite</span></h2>
+<div id="src" class="muted" style="text-transform:none;margin-bottom:18px"></div>
+<div id="out"><div class="card"><span class="spin"></span><span id="status">Sending code to Code Doctor…</span></div></div>
+</div><script src="report.js"></script></body></html>

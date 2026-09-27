@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor from '@monaco-editor/react'
 import { API_BASE } from '../config.js'
+import LandingInfo from './LandingInfo.jsx'
 
 const EDITOR_OPTIONS = {
   minimap: { enabled: false },
@@ -213,6 +214,7 @@ export default function Landing({ code, setCode, onAnalyze, editorRef }) {
           ))}
         </div>
       )}
+      <LandingInfo />
     </div>
   )
 }

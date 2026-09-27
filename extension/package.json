@@ -1,0 +1,27 @@
+{
+  "name": "code-doctor",
+  "displayName": "Code Doctor — Scale-aware Analysis",
+  "description": "Will your code survive scale? Time/space complexity, N+1 and security analysis with IBM Granite optimization, verified by a deterministic analyzer.",
+  "version": "0.1.0",
+  "publisher": "code-doctor",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Linters", "Programming Languages"],
+  "activationEvents": ["onLanguage:python"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "codeDoctor.analyze", "title": "Code Doctor: Analyze This File", "icon": "$(pulse)" }
+    ],
+    "menus": {
+      "editor/title": [ { "command": "codeDoctor.analyze", "when": "editorLangId == python", "group": "navigation" } ],
+      "editor/context": [ { "command": "codeDoctor.analyze", "when": "editorLangId == python", "group": "navigation" } ]
+    },
+    "keybindings": [ { "command": "codeDoctor.analyze", "key": "ctrl+alt+d", "when": "editorLangId == python" } ],
+    "configuration": {
+      "title": "Code Doctor",
+      "properties": {
+        "codeDoctor.apiUrl": { "type": "string", "default": "http://127.0.0.1:8000", "description": "Code Doctor backend URL" }
+      }
+    }
+  }
+}
