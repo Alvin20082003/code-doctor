@@ -1,38 +1,43 @@
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer
 } from 'recharts'
 
 const COMPLEXITY_COLORS = {
-  'O(1)':       '#1E8E3E',
-  'O(log n)':   '#1E8E3E',
-  'O(n)':       '#F9AB00',
-  'O(n log n)': '#F9AB00',
-  'O(n^2)':     '#D93025',
-  'O(n^3)':     '#D93025',
-  'O(2^n)':     '#D93025',
-  'unknown':    '#9AA0A6',
+  'O(1)':        'var(--success)',
+  'O(log n)':    'var(--success)',
+  'O(n)':        '#8A93A6',
+  'O(n+m)':      '#8A93A6',
+  'O(n log n)':  'var(--sev-medium)',
+  'O(n*m)':      'var(--sev-high)',
+  'O(n^2)':      'var(--sev-high)',
+  'O(n^3)':      'var(--sev-high)',
+  'O(2^n)':      'var(--sev-critical)',
+  'unknown':     '#555E72',
 }
 
 function BigOBadge({ label, sublabel }) {
-  const color = COMPLEXITY_COLORS[label] || '#9AA0A6'
+  const raw = label || '?'
   return (
     <div style={{
       display: 'inline-flex',
       flexDirection: 'column',
       alignItems: 'center',
-      padding: '10px 20px',
-      borderRadius: 10,
-      background: color + '18',
-      border: `1.5px solid ${color}40`,
-      minWidth: 100,
+      padding: '8px 16px',
+      borderRadius: 6,
+      background: 'var(--elevated)',
+      border: '1px solid var(--border-md)',
+      minWidth: 90,
     }}>
-      <span style={{ fontSize: 18, fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace' }}>
-        {label || '?'}
+      <span style={{
+        fontSize: 16,
+        fontWeight: 700,
+        fontFamily: 'JetBrains Mono, monospace',
+        color: COMPLEXITY_COLORS[raw] ?? '#8A93A6',
+      }}>
+        {raw}
       </span>
-      {sublabel && (
-        <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>{sublabel}</span>
-      )}
+      {sublabel && <span style={{ fontSize: 10, color: 'var(--dim)', marginTop: 3 }}>{sublabel}</span>}
     </div>
   )
 }
@@ -40,27 +45,24 @@ function BigOBadge({ label, sublabel }) {
 function EvidenceList({ evidence = [], onHighlightLine }) {
   if (!evidence.length) return null
   return (
-    <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <ul style={{ listStyle: 'none', margin: '10px 0 0', display: 'flex', flexDirection: 'column', gap: 5 }}>
       {evidence.map((e, i) => (
-        <li key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 13 }}>
+        <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 11 }}>
           {e.line != null && (
             <button
               onClick={() => onHighlightLine && onHighlightLine(e.line)}
               style={{
-                padding: '1px 7px',
-                borderRadius: 6,
+                padding: '1px 6px',
+                borderRadius: 3,
                 border: '1px solid var(--border)',
-                background: '#F8F9FA',
-                fontSize: 11,
+                background: 'var(--bg)',
+                fontSize: 10,
                 fontFamily: 'JetBrains Mono, monospace',
                 color: 'var(--accent)',
                 cursor: 'pointer',
-                whiteSpace: 'nowrap',
                 flexShrink: 0,
               }}
-            >
-              L{e.line}
-            </button>
+            >L{e.line}</button>
           )}
           <span style={{ color: 'var(--muted)', lineHeight: 1.5 }}>{e.reason}</span>
         </li>
@@ -69,47 +71,88 @@ function EvidenceList({ evidence = [], onHighlightLine }) {
   )
 }
 
+function fmtOps(v) {
+  if (v >= 1e12) return `${(v/1e12).toFixed(1)}T`
+  if (v >= 1e9)  return `${(v/1e9).toFixed(1)}B`
+  if (v >= 1e6)  return `${(v/1e6).toFixed(1)}M`
+  if (v >= 1e3)  return `${(v/1e3).toFixed(1)}k`
+  return String(Math.round(v))
+}
+
 function GrowthChart({ curveBefore, curveAfter }) {
   if (!curveBefore || curveBefore.length === 0) return null
 
   const data = curveBefore.map((pt, i) => ({
     n: pt.n,
     Before: pt.ops,
-    ...(curveAfter && curveAfter[i] ? { After: curveAfter[i].ops } : {}),
+    ...(curveAfter?.[i] ? { After: curveAfter[i].ops } : {}),
   }))
 
+  const hasAfter = curveAfter && curveAfter.length > 0
+
+  // Caption at n=100000
+  const last = data[data.length - 1]
+  const caption = last
+    ? (hasAfter
+        ? `At n = 100,000: ${fmtOps(last.Before)} ops → ${fmtOps(last.After ?? 0)} ops`
+        : `At n = 100,000: ${fmtOps(last.Before)} operations`)
+    : ''
+
   return (
-    <div style={{ marginTop: 24 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text)' }}>
-        Growth curve{curveAfter && curveAfter.length > 0 ? ' (before vs. after optimization)' : ''}
+    <div style={{ marginTop: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Growth curve
+        </span>
+        {caption && (
+          <span style={{ fontSize: 10, color: 'var(--dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+            {caption}
+          </span>
+        )}
       </div>
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#E8EAED" />
+      <ResponsiveContainer width="100%" height={200}>
+        <AreaChart data={data} margin={{ top: 4, right: 8, left: 4, bottom: 4 }}>
+          <defs>
+            <linearGradient id="gbefore" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#F2555A" stopOpacity={0.25}/>
+              <stop offset="95%" stopColor="#F2555A" stopOpacity={0}/>
+            </linearGradient>
+            <linearGradient id="gafter" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%"  stopColor="#2FBF71" stopOpacity={0.25}/>
+              <stop offset="95%" stopColor="#2FBF71" stopOpacity={0}/>
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="2 4" stroke="var(--border)" />
           <XAxis
             dataKey="n"
-            tick={{ fontSize: 11, fill: '#9AA0A6' }}
-            label={{ value: 'Input size (n)', position: 'insideBottom', offset: -2, fontSize: 11, fill: '#9AA0A6' }}
+            tick={{ fontSize: 10, fill: 'var(--dim)', fontFamily: 'JetBrains Mono' }}
+            tickFormatter={v => v >= 1000 ? `${v/1000}k` : String(v)}
           />
           <YAxis
             scale="log"
             domain={['auto', 'auto']}
-            tick={{ fontSize: 11, fill: '#9AA0A6' }}
-            tickFormatter={v => v >= 1e9 ? `${(v/1e9).toFixed(0)}B` : v >= 1e6 ? `${(v/1e6).toFixed(0)}M` : v >= 1e3 ? `${(v/1e3).toFixed(0)}k` : String(v)}
-            label={{ value: 'Operations (log)', angle: -90, position: 'insideLeft', fontSize: 11, fill: '#9AA0A6' }}
-            allowDataKey={false}
+            tick={{ fontSize: 10, fill: 'var(--dim)', fontFamily: 'JetBrains Mono' }}
+            tickFormatter={fmtOps}
+            width={42}
           />
           <Tooltip
-            formatter={(v) => v.toLocaleString()}
-            labelFormatter={(l) => `n = ${l}`}
-            contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid var(--border)' }}
+            formatter={(v, name) => [fmtOps(v) + ' ops', name]}
+            labelFormatter={l => `n = ${Number(l).toLocaleString()}`}
+            contentStyle={{
+              fontSize: 11,
+              background: 'var(--elevated)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              color: 'var(--text)',
+              fontFamily: 'JetBrains Mono, monospace',
+            }}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Line type="monotone" dataKey="Before" stroke="#D93025" strokeWidth={2} dot={false} name="Before" />
-          {curveAfter && curveAfter.length > 0 && (
-            <Line type="monotone" dataKey="After" stroke="#1E8E3E" strokeWidth={2} dot={false} name="After" />
+          {hasAfter && <Legend wrapperStyle={{ fontSize: 11, color: 'var(--muted)' }} />}
+          <Area type="monotone" dataKey="Before" stroke="#F2555A" strokeWidth={2} fill="url(#gbefore)" dot={false} name="Before" />
+          {hasAfter && (
+            <Area type="monotone" dataKey="After" stroke="#2FBF71" strokeWidth={2} fill="url(#gafter)" dot={false} name="After" />
           )}
-        </LineChart>
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   )
@@ -118,36 +161,28 @@ function GrowthChart({ curveBefore, curveAfter }) {
 export default function ComplexityTab({ time, space, curveBefore, curveAfter, onHighlightLine }) {
   return (
     <div>
-      <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-        {/* Time */}
-        <div style={{ flex: '1 1 220px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 10 }}>
-            TIME COMPLEXITY
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 180px' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+            Time Complexity
           </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <BigOBadge label={time?.complexity} sublabel="before" />
-          </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
-            Confidence: <strong>{time?.confidence || '—'}</strong>
+          <BigOBadge label={time?.complexity} sublabel="measured" />
+          <div style={{ fontSize: 11, color: 'var(--dim)', marginTop: 6 }}>
+            Confidence: <span style={{ color: 'var(--muted)', fontWeight: 500 }}>{time?.confidence ?? '—'}</span>
           </div>
           <EvidenceList evidence={time?.evidence} onHighlightLine={onHighlightLine} />
         </div>
-
-        {/* Space */}
-        <div style={{ flex: '1 1 220px' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 10 }}>
-            SPACE COMPLEXITY
+        <div style={{ flex: '1 1 180px' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+            Space Complexity
           </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <BigOBadge label={space?.complexity} sublabel="before" />
-          </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>
-            Confidence: <strong>{space?.confidence || '—'}</strong>
+          <BigOBadge label={space?.complexity} sublabel="measured" />
+          <div style={{ fontSize: 11, color: 'var(--dim)', marginTop: 6 }}>
+            Confidence: <span style={{ color: 'var(--muted)', fontWeight: 500 }}>{space?.confidence ?? '—'}</span>
           </div>
           <EvidenceList evidence={space?.evidence} onHighlightLine={onHighlightLine} />
         </div>
       </div>
-
       <GrowthChart curveBefore={curveBefore} curveAfter={curveAfter} />
     </div>
   )

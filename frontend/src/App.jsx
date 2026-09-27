@@ -1,35 +1,64 @@
-import { useState, useRef, useCallback } from 'react'
-import InputScreen from './components/InputScreen.jsx'
-import AnalysisScreen from './components/AnalysisScreen.jsx'
-import ReportScreen from './components/ReportScreen.jsx'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import Landing from './components/Landing.jsx'
+import Workspace from './components/Workspace.jsx'
 import { API_BASE } from './config.js'
 
-// Phase: 'input' | 'analyzing' | 'report'
+// Agents in pipeline order
+const AGENT_KEYS = ['time_complexity', 'space_complexity', 'performance', 'security', 'optimizer']
+
+function makeInitialAgents() {
+  return Object.fromEntries(
+    AGENT_KEYS.map(k => [k, { status: 'waiting', message: '', duration_ms: null }])
+  )
+}
+
 export default function App() {
-  const [phase, setPhase] = useState('input')
+  const [phase, setPhase] = useState('landing')   // 'landing' | 'analyzing' | 'report'
   const [code, setCode] = useState('')
-  const [agents, setAgents] = useState(initialAgents())
+  const [agents, setAgents] = useState(makeInitialAgents)
   const [report, setReport] = useState(null)
   const [backendError, setBackendError] = useState(false)
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const [healthy, setHealthy] = useState(null)  // null=unknown, true, false
   const editorRef = useRef(null)
+  const timerRef = useRef(null)
+  const startTimeRef = useRef(null)
 
-  function initialAgents() {
-    return {
-      time_complexity:  { status: 'waiting', message: '' },
-      space_complexity: { status: 'waiting', message: '' },
-      performance:      { status: 'waiting', message: '' },
-      security:         { status: 'waiting', message: '' },
-      optimizer:        { status: 'waiting', message: '' },
+  // Health check
+  useEffect(() => {
+    const check = () => {
+      fetch(`${API_BASE}/api/health`)
+        .then(r => r.ok ? setHealthy(true) : setHealthy(false))
+        .catch(() => setHealthy(false))
     }
-  }
+    check()
+    const id = setInterval(check, 15000)
+    return () => clearInterval(id)
+  }, [])
+
+  const startTimer = useCallback(() => {
+    startTimeRef.current = Date.now()
+    setElapsedMs(0)
+    timerRef.current = setInterval(() => {
+      setElapsedMs(Date.now() - startTimeRef.current)
+    }, 100)
+  }, [])
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
 
   const handleAnalyze = useCallback(async () => {
     if (!code.trim()) return
 
     setBackendError(false)
     setReport(null)
-    setAgents(initialAgents())
+    setAgents(makeInitialAgents())
     setPhase('analyzing')
+    startTimer()
 
     let jobId
     try {
@@ -45,14 +74,12 @@ export default function App() {
       const data = await res.json()
       jobId = data.job_id
     } catch (err) {
-      if (err.message.includes('fetch') || err.message.includes('Failed')) {
-        setBackendError(true)
-      }
-      setPhase('input')
+      stopTimer()
+      setBackendError(true)
+      setPhase('landing')
       return
     }
 
-    // Open SSE stream
     const es = new EventSource(`${API_BASE}/api/jobs/${jobId}/events`)
 
     es.onmessage = (e) => {
@@ -62,10 +89,15 @@ export default function App() {
       if (event.type === 'agent') {
         setAgents(prev => ({
           ...prev,
-          [event.name]: { status: event.status, message: event.message || '' },
+          [event.name]: {
+            status: event.status,
+            message: event.message || '',
+            duration_ms: event.duration_ms ?? null,
+          },
         }))
       } else if (event.type === 'final') {
         es.close()
+        stopTimer()
         setReport(event.report)
         setPhase('report')
       }
@@ -73,17 +105,18 @@ export default function App() {
 
     es.onerror = () => {
       es.close()
-      // If still analyzing and we have no report, stay on analysis screen
-      // with whatever partial state we have — don't blank the screen
+      stopTimer()
     }
-  }, [code])
+  }, [code, startTimer, stopTimer])
 
   const handleReset = useCallback(() => {
-    setPhase('input')
+    stopTimer()
+    setPhase('landing')
     setReport(null)
-    setAgents(initialAgents())
+    setAgents(makeInitialAgents())
     setBackendError(false)
-  }, [])
+    setElapsedMs(0)
+  }, [stopTimer])
 
   const handleHighlightLine = useCallback((lineNumber) => {
     const editor = editorRef.current
@@ -98,79 +131,114 @@ export default function App() {
     editor.focus()
   }, [])
 
+  const isWorkspace = phase === 'analyzing' || phase === 'report'
+
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      {/* Top bar */}
-      <header style={{
-        display: 'flex',
-        alignItems: 'center',
-        padding: '16px 32px',
-        background: '#fff',
-        borderBottom: '1px solid var(--border)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-      }}>
-        <span style={{ fontSize: 17, fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.3px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
+      {/* ── Top bar ─────────────────────────────────────────────────── */}
+      <TopBar healthy={healthy} isWorkspace={isWorkspace} onReset={handleReset} />
+
+      {/* ── Main ────────────────────────────────────────────────────── */}
+      {backendError && (
+        <div style={{
+          background: 'var(--err-dim)',
+          borderBottom: '1px solid var(--err-border)',
+          padding: '10px 24px',
+          fontSize: 13,
+          color: 'var(--sev-high)',
+          flexShrink: 0,
+        }}>
+          <strong>Backend offline</strong> — start with{' '}
+          <code style={{ fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--muted)' }}>
+            uvicorn main:app --reload --port 8000
+          </code>
+        </div>
+      )}
+
+      {!isWorkspace ? (
+        <Landing
+          code={code}
+          setCode={setCode}
+          onAnalyze={handleAnalyze}
+          editorRef={editorRef}
+        />
+      ) : (
+        <Workspace
+          code={code}
+          agents={agents}
+          report={report}
+          phase={phase}
+          elapsedMs={elapsedMs}
+          onHighlightLine={handleHighlightLine}
+          editorRef={editorRef}
+        />
+      )}
+    </div>
+  )
+}
+
+function TopBar({ healthy, isWorkspace, onReset }) {
+  return (
+    <header style={{
+      height: 52,
+      flexShrink: 0,
+      display: 'flex',
+      alignItems: 'center',
+      padding: '0 20px',
+      background: 'var(--surface)',
+      borderBottom: '1px solid var(--border)',
+      zIndex: 200,
+    }}>
+      {/* Logo */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ color: 'var(--accent)', fontSize: 16 }}>◆</span>
+        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', letterSpacing: '-0.2px' }}>
           Code Doctor
         </span>
-        {phase !== 'input' && (
+        <span style={{ color: 'var(--border-md)', userSelect: 'none' }}>·</span>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Scale-aware code analysis</span>
+      </div>
+
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Health pill */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '4px 10px',
+          borderRadius: 20,
+          background: 'var(--elevated)',
+          border: '1px solid var(--border)',
+          fontSize: 11,
+          color: 'var(--muted)',
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: healthy === true ? 'var(--success)' : healthy === false ? 'var(--sev-high)' : 'var(--muted)',
+            flexShrink: 0,
+          }} />
+          IBM Granite 3.3 · {healthy === true ? 'online' : healthy === false ? 'offline' : 'checking…'}
+        </div>
+
+        {isWorkspace && (
           <button
-            onClick={handleReset}
+            onClick={onReset}
             style={{
-              marginLeft: 'auto',
-              padding: '6px 16px',
-              borderRadius: 20,
+              padding: '5px 14px',
+              borderRadius: 6,
               border: '1px solid var(--border)',
-              background: '#fff',
+              background: 'var(--elevated)',
               color: 'var(--text)',
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 500,
               cursor: 'pointer',
+              letterSpacing: '-0.1px',
             }}
           >
             ← New analysis
           </button>
         )}
-      </header>
-
-      <main style={{ maxWidth: 900, margin: '0 auto', padding: '32px 16px 64px' }}>
-        {backendError && (
-          <div style={{
-            background: '#FFF3F0',
-            border: '1px solid #FFDAD4',
-            borderRadius: 12,
-            padding: '14px 20px',
-            marginBottom: 24,
-            color: '#D93025',
-            fontSize: 14,
-          }}>
-            <strong>Backend offline</strong> — start the server with <code style={{ fontFamily: 'JetBrains Mono', fontSize: 12 }}>uvicorn backend.main:app --reload</code> then try again.
-          </div>
-        )}
-
-        {(phase === 'input' || phase === 'analyzing' || phase === 'report') && (
-          <InputScreen
-            code={code}
-            setCode={setCode}
-            onAnalyze={handleAnalyze}
-            isRunning={phase === 'analyzing'}
-            editorRef={editorRef}
-          />
-        )}
-
-        {(phase === 'analyzing' || phase === 'report') && (
-          <AnalysisScreen agents={agents} />
-        )}
-
-        {phase === 'report' && report && (
-          <ReportScreen
-            report={report}
-            originalCode={code}
-            onHighlightLine={handleHighlightLine}
-          />
-        )}
-      </main>
-    </div>
+      </div>
+    </header>
   )
 }

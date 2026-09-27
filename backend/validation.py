@@ -21,22 +21,27 @@ import types
 # Pattern detection
 # ---------------------------------------------------------------------------
 
-def _has_users_orders_pattern(code: str) -> bool:
+def _has_users_orders_pattern(code: str) -> tuple[bool, bool]:
     """
-    Return True if the code contains a function whose parameters include
-    both 'users' and 'orders' (the canonical nested-loop fixture pattern).
+    Return (has_pattern, has_extra_params).
+
+    has_pattern   – code has a function with 'users' and 'orders' params.
+    has_extra_params – that function also has params beyond users/orders
+                       (e.g. 'db'), which would require external dependencies
+                       and make subprocess execution unreliable.
     """
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return False
+        return False, False
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             param_names = {a.arg for a in node.args.args}
             if "users" in param_names and "orders" in param_names:
-                return True
-    return False
+                extra = param_names - {"users", "orders", "self"}
+                return True, bool(extra)
+    return False, False
 
 
 def _get_first_function_name(code: str) -> str | None:
@@ -119,8 +124,14 @@ def check_behavior(original_code: str, optimized_code: str) -> dict:
     }
     """
     # Only test the well-known users×orders pattern
-    if not _has_users_orders_pattern(original_code):
+    has_pattern, has_extra = _has_users_orders_pattern(original_code)
+    if not has_pattern:
         return {"tested": False, "reason": "static verification only"}
+
+    # Functions that also accept external dependencies (e.g. db) cannot be
+    # safely run in a subprocess harness without mocking those deps.
+    if has_extra:
+        return {"tested": False, "reason": "static verification only (external dependencies)"}
 
     orig_func = _get_first_function_name(original_code)
     opt_func  = _get_first_function_name(optimized_code)

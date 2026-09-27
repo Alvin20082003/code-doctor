@@ -43,6 +43,69 @@ def _get_func_name(node: ast.AST) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Built-in O(n) / O(n log n) call detector
+# ---------------------------------------------------------------------------
+
+# Bare-name builtins that iterate their first argument — O(n) each
+_LINEAR_BUILTINS: frozenset[str] = frozenset({
+    "sum", "max", "min", "any", "all",
+    "list", "set", "tuple", "dict",
+})
+
+# Attribute calls that iterate the receiver or first arg — O(n) each
+# e.g.  ",".join(items)   items.count(x)   items.index(x)   items.copy()
+_LINEAR_METHODS: frozenset[str] = frozenset({
+    "join", "count", "index", "copy",
+})
+
+
+def _is_linear_builtin_call(node: ast.Call) -> tuple[bool, str]:
+    """
+    Return (True, reason) if *node* is a call whose work is O(n) in the
+    size of its argument / receiver.  Returns (False, "") otherwise.
+
+    Excluded: len() — O(1) in CPython.
+    Does NOT flag sorted() / sort() — handled separately as O(n log n).
+    """
+    func = node.func
+
+    # --- bare name: sum(xs), max(xs), … ---
+    if isinstance(func, ast.Name) and func.id in _LINEAR_BUILTINS:
+        name = func.id
+        return True, f"{name}() iterates the whole collection — O(n)"
+
+    # --- attribute call: xs.count(v), xs.index(v), xs.copy(), "sep".join(xs) ---
+    if isinstance(func, ast.Attribute) and func.attr in _LINEAR_METHODS:
+        attr = func.attr
+        return True, f".{attr}() iterates the collection — O(n)"
+
+    # --- `x in name` where name is a Name node (likely a parameter/variable) ---
+    # This is handled in the Compare walk below; not a Call, so skip here.
+
+    return False, ""
+
+
+def _has_linear_in_check(stmt: ast.stmt) -> list[tuple[int, str]]:
+    """
+    Return a list of (lineno, reason) for every `x in some_name` comparison
+    found inside *stmt* (not inside nested loops).
+
+    `x in some_name` is O(n) for lists/tuples; we flag it conservatively.
+    We skip `x in {literal_set}` (that's O(1)).
+    """
+    results: list[tuple[int, str]] = []
+    for child in ast.walk(stmt):
+        if isinstance(child, ast.Compare):
+            for i, op in enumerate(child.ops):
+                if isinstance(op, ast.In):
+                    comp = child.comparators[i]
+                    if isinstance(comp, ast.Name):
+                        line = getattr(child, "lineno", 0)
+                        results.append((line, f"`{ast.unparse(child.left)} in {comp.id}` — O(n) membership test"))
+    return results
+
+
 def _iter_key(iter_node: ast.expr) -> str:
     """
     Return a stable string identity for a For-loop iterable.
@@ -525,6 +588,98 @@ class _FuncAnalyzer:
                 for sub in sub_bodies:
                     self._walk_space(sub, depth, grouped_dicts, outer_iters)
 
+    # -- linear builtins (top-level, outside loops) -----------------------
+
+    def _check_linear_builtins(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef):
+        """
+        Detect O(n) work from built-in calls (sum, max, min, any, all,
+        list, set, tuple, dict, .join, .count, .index, .copy) and
+        `x in collection` comparisons.
+
+        At the top level (outside loops): contributes O(n).
+        Inside a loop: contributes O(n^2) (multiplicative factor).
+
+        This runs after loop analysis, so O(n^2) upgrades are still possible
+        even when the loop analysis already set O(n).
+        """
+        # Walk only the flat (non-loop) statement tree
+        self._walk_linear_builtins(func_node.body, in_loop=False)
+
+    def _walk_linear_builtins(
+        self,
+        stmts: list[ast.stmt],
+        in_loop: bool,
+    ):
+        """
+        Recursively walk *stmts*.  When in_loop=True (we are inside a
+        for/while), a linear builtin call becomes O(n^2).
+        When in_loop=False it is O(n).
+        """
+        for stmt in stmts:
+            if isinstance(stmt, (ast.For, ast.While)):
+                # Recurse into loop body with in_loop=True
+                self._walk_linear_builtins(stmt.body, in_loop=True)
+                # Also check the loop's iterable expression for linear builtins
+                # e.g. `for x in sorted(xs):` — but sorted is already caught
+                if isinstance(stmt, ast.For):
+                    # Check if the iterable itself is a linear builtin call
+                    if isinstance(stmt.iter, ast.Call):
+                        is_lin, reason = _is_linear_builtin_call(stmt.iter)
+                        if is_lin:
+                            line = getattr(stmt.iter, "lineno", stmt.lineno)
+                            complexity = "O(n^2)" if in_loop else "O(n)"
+                            self._update_time(
+                                complexity, "medium",
+                                {"line": line, "reason": reason},
+                            )
+                continue
+
+            # For non-loop statements, scan all Call nodes within
+            if isinstance(stmt, (ast.If, ast.With, ast.Try)):
+                sub_bodies: list[list[ast.stmt]] = []
+                if hasattr(stmt, "body"):
+                    sub_bodies.append(stmt.body)
+                if hasattr(stmt, "orelse") and stmt.orelse:
+                    sub_bodies.append(stmt.orelse)
+                if hasattr(stmt, "handlers"):
+                    for h in stmt.handlers:
+                        sub_bodies.append(h.body)
+                if hasattr(stmt, "finalbody"):
+                    sub_bodies.append(stmt.finalbody)
+                for sub in sub_bodies:
+                    self._walk_linear_builtins(sub, in_loop)
+                continue
+
+            # Plain statement: walk for linear calls
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Call):
+                    is_lin, reason = _is_linear_builtin_call(node)
+                    if is_lin:
+                        line = getattr(node, "lineno", 0)
+                        complexity = "O(n^2)" if in_loop else "O(n)"
+                        self._update_time(
+                            complexity, "medium",
+                            {"line": line, "reason": reason},
+                        )
+
+                # `x in name` comparison — O(n) membership.
+                # Only emit when NOT in_loop: the loop analyzer already
+                # calls _has_in_list_check which emits O(n^2) for those.
+                if not in_loop and isinstance(node, ast.Compare):
+                    for i, op in enumerate(node.ops):
+                        if isinstance(op, ast.In):
+                            comp = node.comparators[i]
+                            if isinstance(comp, ast.Name):
+                                line = getattr(node, "lineno", 0)
+                                reason = (
+                                    f"`{ast.unparse(node.left)} in {comp.id}`"
+                                    f" — O(n) membership test"
+                                )
+                                self._update_time(
+                                    "O(n)", "medium",
+                                    {"line": line, "reason": reason},
+                                )
+
     # -- entry point -------------------------------------------------------
 
     def analyze(self, func_node: ast.FunctionDef | ast.AsyncFunctionDef):
@@ -532,6 +687,7 @@ class _FuncAnalyzer:
         self._analyze_loops(func_node)
         if self.time_complexity in ("O(1)", "O(n)", "O(n+m)"):
             self._check_top_level_sort(func_node)
+        self._check_linear_builtins(func_node)
         self._analyze_space(func_node)
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
+import time
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -75,26 +76,31 @@ async def _run_analyzer(
     Returns the result or None on failure.
     """
     await queue.put({"type": "agent", "name": name, "status": "running"})
+    t0 = time.monotonic()
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(fn, *args),
             timeout=timeout,
         )
-        await queue.put({"type": "agent", "name": name, "status": "done"})
+        duration_ms = round((time.monotonic() - t0) * 1000)
+        await queue.put({"type": "agent", "name": name, "status": "done", "duration_ms": duration_ms})
         await queue.put({"type": "result", "name": name, "data": result})
         return result
     except asyncio.TimeoutError:
+        duration_ms = round((time.monotonic() - t0) * 1000)
         msg = f"timed out after {timeout}s"
-        await queue.put({"type": "agent", "name": name, "status": "failed", "message": msg})
+        await queue.put({"type": "agent", "name": name, "status": "failed", "message": msg, "duration_ms": duration_ms})
         return None
     except Exception as exc:
-        await queue.put({"type": "agent", "name": name, "status": "failed", "message": str(exc)})
+        duration_ms = round((time.monotonic() - t0) * 1000)
+        await queue.put({"type": "agent", "name": name, "status": "failed", "message": str(exc), "duration_ms": duration_ms})
         return None
 
 
 async def _run_pipeline(job_id: str, code: str) -> None:
     """Full analysis pipeline for a single job."""
     queue: asyncio.Queue = _jobs[job_id]["queue"]
+    pipeline_start = time.monotonic()
 
     # -----------------------------------------------------------------------
     # Step 1: run the 4 analyzers in parallel
@@ -112,29 +118,42 @@ async def _run_pipeline(job_id: str, code: str) -> None:
     perf_result  = perf_result  or []
     sec_result   = sec_result   or []
 
+    # Compute preliminary score so optimizer can check for short-circuit
+    score_data_pre = scale_score(
+        time_result or {"complexity": "unknown", "confidence": "low", "evidence": []},
+        space_result or {"complexity": "unknown", "confidence": "low", "evidence": []},
+        perf_result or [],
+        sec_result or [],
+    )
+
     analysis = {
         "time":        time_result,
         "space":       space_result,
         "performance": perf_result,
         "security":    sec_result,
+        "_score":      score_data_pre["score"],   # used by optimizer not_needed check
     }
 
     # -----------------------------------------------------------------------
     # Step 2: optimizer (async, runs in event loop directly)
     # -----------------------------------------------------------------------
     await queue.put({"type": "agent", "name": "optimizer", "status": "running"})
+    opt_t0 = time.monotonic()
     try:
         opt_result = await asyncio.wait_for(optimize(code, analysis), timeout=180.0)
-        await queue.put({"type": "agent", "name": "optimizer", "status": "done"})
+        opt_ms = round((time.monotonic() - opt_t0) * 1000)
+        await queue.put({"type": "agent", "name": "optimizer", "status": "done", "duration_ms": opt_ms})
         await queue.put({"type": "result", "name": "optimizer", "data": opt_result})
     except asyncio.TimeoutError:
+        opt_ms = round((time.monotonic() - opt_t0) * 1000)
         opt_result = {"status": "failed", "note": "optimizer timed out"}
         await queue.put({"type": "agent", "name": "optimizer", "status": "failed",
-                         "message": "timed out after 180s"})
+                         "message": "timed out after 180s", "duration_ms": opt_ms})
     except Exception as exc:
+        opt_ms = round((time.monotonic() - opt_t0) * 1000)
         opt_result = {"status": "failed", "note": str(exc)}
         await queue.put({"type": "agent", "name": "optimizer", "status": "failed",
-                         "message": str(exc)})
+                         "message": str(exc), "duration_ms": opt_ms})
 
     # -----------------------------------------------------------------------
     # Step 3: scoring
@@ -164,16 +183,32 @@ async def _run_pipeline(job_id: str, code: str) -> None:
         score_after = score_after_data["score"]
 
     # -----------------------------------------------------------------------
-    # Step 4: final report
+    # Step 4: speedup calculation
     # -----------------------------------------------------------------------
+    speedup: float | None = None
+    if curve_before and curve_after:
+        # ops at n=100000 is the last point
+        ops_b = curve_before[-1]["ops"] if curve_before else None
+        ops_a = curve_after[-1]["ops"] if curve_after else None
+        if ops_b and ops_a and ops_a > 0:
+            speedup = round(ops_b / ops_a)
+
+    total_ms = round((time.monotonic() - pipeline_start) * 1000)
+
+    # -----------------------------------------------------------------------
+    # Step 5: final report (strip internal _score key)
+    # -----------------------------------------------------------------------
+    clean_analysis = {k: v for k, v in analysis.items() if not k.startswith("_")}
     report = {
-        **analysis,
-        "optimizer": opt_result,
-        "score":       score_data["score"],
-        "breakdown":   score_data["breakdown"],
+        **clean_analysis,
+        "optimizer":    opt_result,
+        "score":        score_data["score"],
+        "breakdown":    score_data["breakdown"],
         "curve_before": curve_before,
         "curve_after":  curve_after,
         "score_after":  score_after,
+        "speedup":      speedup,
+        "total_ms":     total_ms,
     }
     _jobs[job_id]["report"] = report
     await queue.put({"type": "final", "report": report})

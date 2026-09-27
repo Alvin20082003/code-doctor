@@ -94,6 +94,23 @@ def scale_score(
     sec_pts = max(sec_pts, 0)
 
     total = time_pts + space_pts + perf_pts + sec_pts
+
+    # -----------------------------------------------------------------------
+    # Security hard caps
+    # Any high-severity security finding → cap at 40.
+    # Any medium-severity security finding (no high) → cap at 70.
+    # -----------------------------------------------------------------------
+    capped_reason: str = ""
+    has_high_sec    = any(f.get("severity") in ("high", "critical") for f in sec_findings)
+    has_medium_sec  = any(f.get("severity") == "medium"             for f in sec_findings)
+
+    if has_high_sec and total > 40:
+        total = 40
+        capped_reason = "Capped at 40: critical security issues present"
+    elif has_medium_sec and not has_high_sec and total > 70:
+        total = 70
+        capped_reason = "Capped at 70: medium security issues present"
+
     return {
         "score": total,
         "breakdown": {
@@ -102,6 +119,7 @@ def scale_score(
             "performance": perf_pts,
             "security": sec_pts,
         },
+        "capped_reason": capped_reason,
     }
 
 

@@ -301,6 +301,31 @@ async def optimize(code: str, analysis: dict) -> dict:
     before_perf  = analysis.get("performance", []) or []
     before_sec   = analysis.get("security",    []) or []
 
+    # ------------------------------------------------------------------
+    # Short-circuit: if the code already scales well, skip the LLM.
+    # ------------------------------------------------------------------
+    _GOOD_COMPLEXITIES = {"O(1)", "O(log n)", "O(n)"}
+    _has_high_findings = any(f.get("severity") == "high" for f in before_perf + before_sec)
+    _score = analysis.get("_score", 0)  # injected by main.py if available
+    if (
+        _score >= 90
+        and not _has_high_findings
+        and not before_perf
+        and not before_sec
+        and before_time in _GOOD_COMPLEXITIES
+    ):
+        return {
+            "status": "not_needed",
+            "optimized_code": None,
+            "explanation": "",
+            "attempts": 0,
+            "before": {"time": before_time, "space": before_space},
+            "after":  {},
+            "after_findings": {},
+            "validation": {"syntax_ok": False, "complexity_improved": False, "behavior": {}},
+            "note": "Already scales well — no optimization needed",
+        }
+
     fix_hints = _build_fix_hints(analysis)
 
     # We'll try up to 2 attempts
