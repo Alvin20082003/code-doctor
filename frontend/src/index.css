@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #F8F9FA;
+  --card: #ffffff;
+  --accent: #1A73E8;
+  --green: #1E8E3E;
+  --amber: #F9AB00;
+  --red: #D93025;
+  --border: #E8EAED;
+  --text: #202124;
+  --muted: #5F6368;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fade-in 0.25s ease forwards;
+}
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.pulse-ring {
+  animation: pulse-ring 1.2s ease-in-out infinite;
+}
