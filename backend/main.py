@@ -124,13 +124,13 @@ async def _run_pipeline(job_id: str, code: str) -> None:
     # -----------------------------------------------------------------------
     await queue.put({"type": "agent", "name": "optimizer", "status": "running"})
     try:
-        opt_result = await asyncio.wait_for(optimize(code, analysis), timeout=8.0)
+        opt_result = await asyncio.wait_for(optimize(code, analysis), timeout=180.0)
         await queue.put({"type": "agent", "name": "optimizer", "status": "done"})
         await queue.put({"type": "result", "name": "optimizer", "data": opt_result})
     except asyncio.TimeoutError:
         opt_result = {"status": "failed", "note": "optimizer timed out"}
         await queue.put({"type": "agent", "name": "optimizer", "status": "failed",
-                         "message": "timed out after 8s"})
+                         "message": "timed out after 180s"})
     except Exception as exc:
         opt_result = {"status": "failed", "note": str(exc)}
         await queue.put({"type": "agent", "name": "optimizer", "status": "failed",
@@ -142,15 +142,26 @@ async def _run_pipeline(job_id: str, code: str) -> None:
     score_data = scale_score(time_result, space_result, perf_result, sec_result)
     curve_before = growth_curve(time_result.get("complexity", "unknown"))
 
-    # If optimizer returned optimised code, re-analyse for curve_after
+    # If optimizer returned verified/rejected code with after complexity, use it for curve_after
+    # The optimizer's verifier has already run analyze_time — use that result directly.
     curve_after: list[dict] = []
-    optimized_code = opt_result.get("optimized_code") if isinstance(opt_result, dict) else None
-    if optimized_code:
-        try:
-            opt_time = await asyncio.to_thread(analyze_time, optimized_code)
-            curve_after = growth_curve(opt_time.get("complexity", "unknown"))
-        except Exception:
-            curve_after = []
+    score_after: int | None = None
+    opt_after = opt_result.get("after") if isinstance(opt_result, dict) else None
+    opt_after_findings = opt_result.get("after_findings") if isinstance(opt_result, dict) else None
+
+    if opt_after and isinstance(opt_after, dict):
+        after_time_complexity = opt_after.get("time", "unknown")
+        curve_after = growth_curve(after_time_complexity)
+
+        # Compute score_after using the optimizer's re-analysis findings
+        after_perf = (opt_after_findings or {}).get("performance", []) if opt_after_findings else []
+        after_sec  = (opt_after_findings or {}).get("security",    []) if opt_after_findings else []
+        # We need a space result too — use the optimizer's after space if available
+        after_space_complexity = opt_after.get("space", "unknown")
+        after_time_dict  = {"complexity": after_time_complexity,  "confidence": "high", "evidence": []}
+        after_space_dict = {"complexity": after_space_complexity, "confidence": "high", "evidence": []}
+        score_after_data = scale_score(after_time_dict, after_space_dict, after_perf, after_sec)
+        score_after = score_after_data["score"]
 
     # -----------------------------------------------------------------------
     # Step 4: final report
@@ -162,6 +173,7 @@ async def _run_pipeline(job_id: str, code: str) -> None:
         "breakdown":   score_data["breakdown"],
         "curve_before": curve_before,
         "curve_after":  curve_after,
+        "score_after":  score_after,
     }
     _jobs[job_id]["report"] = report
     await queue.put({"type": "final", "report": report})

@@ -50,7 +50,7 @@ function ScoreRing({ score }) {
 export default function ReportScreen({ report, originalCode, onHighlightLine }) {
   const [activeTab, setActiveTab] = useState('complexity')
 
-  const { score, time, space, performance, security, optimizer, curve_before, curve_after } = report
+  const { score, score_after, time, space, performance, security, optimizer, curve_before, curve_after } = report
 
   return (
     <div className="fade-in" style={{ marginTop: 32 }}>
@@ -64,8 +64,20 @@ export default function ReportScreen({ report, originalCode, onHighlightLine }) 
         alignItems: 'center',
         gap: 40,
         marginBottom: 24,
+        flexWrap: 'wrap',
       }}>
-        <ScoreRing score={score ?? 0} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: score_after != null ? 20 : 0 }}>
+          <ScoreRing score={score ?? 0} />
+          {score_after != null && (
+            <>
+              <div style={{ fontSize: 22, color: 'var(--muted)', fontWeight: 300 }}>→</div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                <ScoreRing score={score_after} />
+                <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: -4 }}>after opt.</span>
+              </div>
+            </>
+          )}
+        </div>
         <div>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Analysis Complete</h2>
           <p style={{ margin: 0, fontSize: 14, color: 'var(--muted)' }}>
@@ -75,6 +87,11 @@ export default function ReportScreen({ report, originalCode, onHighlightLine }) 
               ? 'Moderate scale issues detected. Review the findings below.'
               : 'Significant scale concerns found. See recommendations below.'}
           </p>
+          {score_after != null && (
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: score_after > score ? 'var(--green)' : '#B06000', fontWeight: 500 }}>
+              Score improved {score} → {score_after} after optimization
+            </p>
+          )}
         </div>
       </div>
 
